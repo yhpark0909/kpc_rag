@@ -1,4 +1,5 @@
-# 로컬 RAG 템플릿 (Ollama + Chroma)
+2026.01.13 업데이트
+# 로컬 RAG 템플릿 (Ollama + Chroma) 
 
 ## 개요
 - LLM: Ollama `gemma3` (로컬)
