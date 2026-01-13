@@ -7,6 +7,7 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings, ChatOllama
 from langchain_chroma import Chroma
+from langchain_classic.chains import RetrievalQA
 
 PDFS_DIR = "pdfs"
 VSTORE_DIR = "vectorstore"
@@ -52,5 +53,29 @@ def get_embeddings():
     emb = OllamaEmbeddings(model="embeddinggemma")
     return emb
 
+def query_loop(question: str):
+    embeddings = get_embeddings()
+    db = Chroma(persist_directory=VSTORE_DIR, embedding_function=embeddings)
+    retriever = db.as_retriever(search_type="similarity", search_kwargs={"k": 3})
+
+    llm = ChatOllama(model="gemma3", temperature=0.7)
+    qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever)
+
+    answer = qa_chain.invoke(question)
+    print("Answer:", answer)
+
+
 if __name__ == "__main__":
-    
+    if len(sys.argv) < 2:
+        print("Usage: python RAG_practice.py [build | query \"your question\"]")
+        sys.exit(1)
+    cmd = sys.argv[1]
+    if cmd == "build":
+        build_vectorstore()
+    elif cmd == "query":
+        if len(sys.argv) < 3:
+            print("Provide a question: python RAG_practice.py query \"질문\"")
+            sys.exit(1)
+        query_loop(sys.argv[2])
+    else:
+        print("Unknown command:", cmd)
