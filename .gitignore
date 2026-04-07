@@ -1,0 +1,23 @@
+# 가상환경
+venv/
+.venv/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 환경파일
+.env
+
+# 데이터 / 벡터DB
+vectorstore/
+data/
+pdfs/
+
+# chainlit
+.chainlit/
+.files/
+
+# DB
+*.db
+*.sqlite
