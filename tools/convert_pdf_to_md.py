@@ -7,92 +7,36 @@ from pathlib import Path
 from typing import Iterable
 
 
-def _remove_noise_lines(lines: list[str]) -> list[str]:
-    """머리말/꼬리말/쪽번호 등 반복 노이즈를 제거한다."""
-    cleaned: list[str] = []
-    page_num_re = re.compile(r"^-?\s*\d+\s*-?$")
-    footer_re = re.compile(r"^(인사관리\s+)?\d+-\d+$")
-
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            cleaned.append("")
-            continue
-        if page_num_re.match(line):
-            continue
-        if footer_re.match(line):
-            continue
-        cleaned.append(line)
-    return cleaned
-
-
-def _merge_wrapped_lines(lines: list[str]) -> list[str]:
-    """PDF 줄바꿈으로 잘린 문장을 문맥 기준으로 병합한다."""
-    merged: list[str] = []
-
-    hard_start_re = re.compile(
-        r"^(#{2,4}\s|제\d+장|제\d+절|제\d+조\(|[①-⑳]|\d+\.|[가-힣]\.|\*|-\s)"
-    )
-
-    for line in lines:
-        if not line:
-            if merged and merged[-1] != "":
-                merged.append("")
-            continue
-
-        if not merged or merged[-1] == "" or hard_start_re.match(line):
-            merged.append(line)
-            continue
-
-        # 직전 라인이 헤더면 본문은 새 줄에 둔다.
-        if re.match(r"^#{2,4}\s", merged[-1]):
-            merged.append(line)
-            continue
-
-        merged[-1] = f"{merged[-1]} {line}".replace("  ", " ").strip()
-
-    return merged
-
-
 def normalize_markdown(text: str, title: str) -> str:
     """PDF 추출 텍스트를 규정형 Markdown으로 정규화한다."""
     lines = [line.rstrip() for line in text.splitlines()]
-    lines = _remove_noise_lines(lines)
-
     out = [f"# {title}", ""]
-    chapter_re = re.compile(r"^(제\d+장[^\n]*)$")
-    section_re = re.compile(r"^(제\d+절[^\n]*)$")
-    article_re = re.compile(r"^(제\d+조\([^\n)]*\))\s*(.*)$")
 
+    chapter_re = re.compile(r"^제\d+장")
+    section_re = re.compile(r"^제\d+절")
+    article_re = re.compile(r"^제\d+조\(")
+
+    prev_blank = False
     for raw in lines:
         line = raw.strip()
         if not line:
-            out.append("")
+            if not prev_blank:
+                out.append("")
+            prev_blank = True
             continue
 
-        chapter_m = chapter_re.match(line)
-        if chapter_m:
-            out.extend([f"## {chapter_m.group(1)}", ""])
-            continue
+        if chapter_re.match(line):
+            out.extend([f"## {line}", ""])
+        elif section_re.match(line):
+            out.extend([f"### {line}", ""])
+        elif article_re.match(line):
+            out.append(f"#### {line}")
+        else:
+            out.append(line)
 
-        section_m = section_re.match(line)
-        if section_m:
-            out.extend([f"### {section_m.group(1)}", ""])
-            continue
+        prev_blank = False
 
-        article_m = article_re.match(line)
-        if article_m:
-            out.append(f"#### {article_m.group(1)}")
-            if article_m.group(2):
-                out.append(article_m.group(2).strip())
-            continue
-
-        out.append(line)
-
-    out = _merge_wrapped_lines(out)
-    normalized = "\n".join(out)
-    normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
-    return normalized + "\n"
+    return "\n".join(out).strip() + "\n"
 
 
 def extract_pdf_text(pdf_path: Path) -> str:

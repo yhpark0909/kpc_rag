@@ -1,0 +1,25 @@
+# 가상환경
+venv/
+.venv/
+
+# 파이썬 캐시
+__pycache__/
+*.pyc
+
+# 환경파일
+.env
+
+# 데이터 / 벡터DB
+vectorstore/
+data/
+pdfs/
+
+# chainlit
+.chainlit/
+.files/
+
+# DB
+*.db
+*.sqlite
+
+KPC AI 챔피언 양성과정_RAG 실무적용 기획서_박영후, 정연우_260115 2100_제출.docx
