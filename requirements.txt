@@ -1,5 +1,17 @@
+# 핵심 라이브러리
 langchain
-langchain_community
-langchain-ollama
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-huggingface
 langchain-chroma
-pymupdf
+
+# 챗봇 서비스 구현
+streamlit
+chainlit
+
+# 인텔 GPU 가속을 위한 OpenVINO 관련 패키지
+openvino-dev
+openvino-telemetry
+openvino-genai
+optimum[openvino,nncf]
