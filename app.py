@@ -5,7 +5,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 
 # 개선된 RAGbuilder 사용 (기존 Qwen3-Embedding 재활용)
@@ -23,9 +23,17 @@ def load_chain():
     """Qwen2.5 + 기존 Qwen3-Embedding 조합 (추가 다운로드 없음)"""
     
     # 1. 임베딩 - 기존 Qwen3-Embedding 재활용 (추가 다운로드 X)
-    embeddings = get_embeddings(device="CPU")
+    try:
+        embeddings = get_embeddings(device="CPU")
+    except Exception:
+        embeddings = None
+
     if embeddings is None:
-        raise RuntimeError("임베딩 모델을 로드할 수 없습니다. RAGbuilder_improved.py validate 명령으로 환경을 확인해주세요.")
+        # OpenVINO 로컬 모델이 없거나 로드 실패 시 Ollama 임베딩으로 폴백
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+
+    if embeddings is None:
+        raise RuntimeError("임베딩 모델을 로드할 수 없습니다. OpenVINO 모델 경로 또는 Ollama 서버 상태를 확인해주세요.")
     
     # 2. 기존 벡터DB 재사용
     db = Chroma(persist_directory=VSTORE_DIR, embedding_function=embeddings)
