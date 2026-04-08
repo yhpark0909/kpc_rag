@@ -149,8 +149,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="사규 PDF를 Markdown으로 변환")
     parser.add_argument(
         "input_path",
+        nargs="?",
         type=Path,
-        help="입력 경로 (PDF 파일 또는 PDF들이 있는 디렉토리)",
+        default=Path("data"),
+        help="입력 경로 (PDF 파일 또는 PDF들이 있는 디렉토리, 기본값: data)",
     )
     parser.add_argument(
         "--out",
