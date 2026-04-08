@@ -9,7 +9,10 @@ from langchain_ollama import ChatOllama
 from langchain_chroma import Chroma
 
 # 개선된 RAGbuilder 사용 (기존 Qwen3-Embedding 재활용)
-from RAGbuilder_improved import get_embeddings, VSTORE_DIR
+from langchain_ollama import OllamaEmbeddings
+from RAGbuilder import VSTORE_DIR
+
+embeddings = OllamaEmbeddings(model="nomic-embed-text")
 
 def clean_llm_output(text: str) -> str:
     """Qwen2.5 출력에서 불필요한 마커 제거"""

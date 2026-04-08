@@ -10,7 +10,18 @@ langchain-chroma
 streamlit
 chainlit
 
-# 인텔 GPU 가속을 위한 OpenVINO 관련 패키지
+# PDF 처리
+pymupdf
+
+# LLM / 임베딩
+transformers
+sentence-transformers
+
+# 서버
+fastapi
+uvicorn
+
+# 인텔 GPU 가속 (선택)
 openvino-dev
 openvino-telemetry
 openvino-genai
