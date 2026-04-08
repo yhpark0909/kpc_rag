@@ -1,18 +1,19 @@
 import chainlit as cl
+import json
+import sqlite3
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 
-from langchain_ollama import ChatOllama
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 
 # 개선된 RAGbuilder 사용 (기존 Qwen3-Embedding 재활용)
-from langchain_ollama import OllamaEmbeddings
-from RAGbuilder import VSTORE_DIR
-
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+from RAGbuilder import EMBEDDINGMODEL_PATH, VSTORE_DIR, get_embeddings
 
 def clean_llm_output(text: str) -> str:
     """Qwen2.5 출력에서 불필요한 마커 제거"""
@@ -21,14 +22,69 @@ def clean_llm_output(text: str) -> str:
         text = text.replace(token, "").strip()
     return text
 
+
+def get_vectorstore_dimension(vstore_dir: str) -> int | None:
+    """Chroma sqlite에서 컬렉션 임베딩 차원 조회."""
+    db_path = Path(vstore_dir) / "chroma.sqlite3"
+    if not db_path.exists():
+        return None
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cur = conn.cursor()
+        cur.execute("SELECT dimension FROM collections WHERE name = 'langchain' LIMIT 1")
+        row = cur.fetchone()
+        conn.close()
+        return row[0] if row and row[0] else None
+    except Exception:
+        return None
+
+
+def get_ollama_model_names() -> set[str]:
+    """로컬 Ollama에 설치된 모델 이름 목록 조회."""
+    req = urllib.request.Request(
+        "http://127.0.0.1:11434/api/tags",
+        method="GET",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            models = payload.get("models", [])
+            return {m.get("name", "") for m in models if m.get("name")}
+    except Exception:
+        return set()
+
 @cl.cache
 def load_chain():
     """Qwen2.5 + 기존 Qwen3-Embedding 조합 (추가 다운로드 없음)"""
     
-    # 1. 임베딩 - 기존 Qwen3-Embedding 재활용 (추가 다운로드 X)
-    embeddings = get_embeddings(device="CPU")
+    # 1. 임베딩 로더 선택
+    # - OpenVINO 로컬 모델이 존재할 때만 get_embeddings 시도
+    # - 실패 시 컬렉션 차원에 맞는 Ollama 임베딩으로 폴백
+    embeddings = None
+    if Path(EMBEDDINGMODEL_PATH).exists():
+        try:
+            embeddings = get_embeddings(device="CPU")
+        except Exception:
+            embeddings = None
+
     if embeddings is None:
-        raise RuntimeError("임베딩 모델을 로드할 수 없습니다. RAGbuilder_improved.py validate 명령으로 환경을 확인해주세요.")
+        # Chroma 컬렉션 차원에 맞춰 폴백 모델 선택
+        # - 2560: qwen3-embedding:4b
+        # - 기타/미확인: nomic-embed-text(768)
+        dimension = get_vectorstore_dimension(VSTORE_DIR)
+        fallback_model = "qwen3-embedding:4b" if dimension == 2560 else "nomic-embed-text"
+        available_models = get_ollama_model_names()
+        if available_models and fallback_model not in available_models:
+            raise RuntimeError(
+                f"Ollama 임베딩 모델 `{fallback_model}` 이(가) 설치되어 있지 않습니다. "
+                f"`ollama pull {fallback_model}` 실행 후 다시 시도해주세요."
+            )
+        embeddings = OllamaEmbeddings(model=fallback_model)
+
+    if embeddings is None:
+        raise RuntimeError("임베딩 모델을 로드할 수 없습니다. OpenVINO 모델 경로 또는 Ollama 서버 상태를 확인해주세요.")
     
     # 2. 기존 벡터DB 재사용
     db = Chroma(persist_directory=VSTORE_DIR, embedding_function=embeddings)
