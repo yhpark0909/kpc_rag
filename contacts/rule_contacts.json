@@ -10,5 +10,11 @@
     "position": "매니저",
     "phone": "02-0000-0000",
     "email": "membership-rule@kpc.or.kr"
+  },
+  "(6-11) 정보보안관리규정.md": {
+    "department": "정보보안 관리부서",
+    "position": "담당",
+    "phone": "02-0000-1111",
+    "email": "security-rule@kpc.or.kr"
   }
 }

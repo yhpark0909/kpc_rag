@@ -65,22 +65,94 @@ def find_article_label(text: str) -> str:
     return "관련 조항"
 
 
-def format_sources(scored_docs: List[Tuple[Document, float]]) -> str:
+def normalize_korean_text(text: str) -> str:
+    """검색/매칭을 위한 단순 정규화 (공백/기호 제거 + 소문자)"""
+    lowered = text.lower()
+    return re.sub(r"[^0-9a-z가-힣]", "", lowered)
+
+
+def extract_regulation_name(question: str) -> Optional[str]:
+    """질문에서 'OO규정' 형태의 규정명 추출"""
+    q = normalize_korean_text(question)
+    match = re.search(r"([가-힣a-z0-9]+규정)", q)
+    return match.group(1) if match else None
+
+
+def calc_keyword_overlap(question: str, doc: Document) -> float:
+    """질문과 문서 간 키워드 중첩 비율(0~1)"""
+    q_tokens = [
+        tok for tok in re.findall(r"[가-힣a-zA-Z0-9]{2,}", question.lower())
+        if tok not in {"알려줘", "내용", "관련", "규정", "조항", "제조", "제"}
+    ]
+    if not q_tokens:
+        return 0.0
+
+    haystack = (
+        normalize_korean_text(Path(doc.metadata.get("source", "")).name)
+        + normalize_korean_text(doc.page_content[:1200])
+    )
+    hit = sum(1 for tok in q_tokens if normalize_korean_text(tok) in haystack)
+    return min(1.0, hit / max(len(q_tokens), 1))
+
+
+def rerank_docs(
+    question: str,
+    raw_docs: List[Tuple[Document, float]],
+) -> List[Tuple[Document, float, float, float, float]]:
+    """
+    raw_docs: (doc, distance)
+    returns: (doc, final_score, semantic_score, lexical_score, distance)
+    """
+    regulation_name = extract_regulation_name(question)
+    regulation_key = normalize_korean_text(regulation_name) if regulation_name else None
+
+    rescored: List[Tuple[Document, float, float, float, float]] = []
+    for doc, distance in raw_docs:
+        semantic_score = 1.0 / (1.0 + max(distance, 0.0))
+        lexical_score = calc_keyword_overlap(question, doc)
+
+        source_name = Path(doc.metadata.get("source", "Unknown")).name
+        source_norm = normalize_korean_text(source_name)
+        content_norm = normalize_korean_text(doc.page_content[:800])
+        source_match = 1.0 if (regulation_key and (regulation_key in source_norm or regulation_key in content_norm)) else 0.0
+
+        final_score = (semantic_score * 0.55) + (lexical_score * 0.25) + (source_match * 0.20)
+        rescored.append((doc, final_score, semantic_score, lexical_score, distance))
+
+    rescored.sort(key=lambda x: x[1], reverse=True)
+
+    # 규정명이 질의에 있으면 해당 규정명 매칭 문서를 우선 사용
+    if regulation_key:
+        matched = []
+        for row in rescored:
+            doc = row[0]
+            source_name = Path(doc.metadata.get("source", "Unknown")).name
+            source_norm = normalize_korean_text(source_name)
+            content_norm = normalize_korean_text(doc.page_content[:1000])
+            if regulation_key in source_norm or regulation_key in content_norm:
+                matched.append(row)
+        if matched:
+            return matched
+
+    return rescored
+
+
+def format_sources(scored_docs: List[Tuple[Document, float, float, float, float]]) -> str:
     """답변 하단에 붙일 출처 문자열 생성"""
     rows = []
-    for idx, (doc, score) in enumerate(scored_docs, 1):
+    for idx, (doc, final_score, _, _, _) in enumerate(scored_docs, 1):
         source_name = Path(doc.metadata.get("source", "Unknown")).name
         article = find_article_label(doc.page_content)
-        rows.append(f"{idx}. {source_name} - {article} (유사도: {score:.2f})")
+        rows.append(f"{idx}. {source_name} - {article} (근거점수: {final_score:.2f})")
     return "\n".join(rows)
 
 
 def pick_contact_by_sources(
     contacts_map: Dict[str, Dict[str, str]],
-    scored_docs: List[Tuple[Document, float]]
+    scored_docs: List[Tuple[Document, float, float, float, float]]
 ) -> Optional[Dict[str, str]]:
     """검색 결과 source 기준으로 담당자 매핑"""
-    for doc, _ in scored_docs:
+    for doc, *_ in scored_docs:
         source_name = Path(doc.metadata.get("source", "")).name
         if source_name in contacts_map:
             return contacts_map[source_name]
@@ -177,22 +249,31 @@ def load_chain():
     ])
 
     def run_qa(question: str) -> str:
-        scored_docs = db.similarity_search_with_relevance_scores(question, k=4)
-        filtered_docs = [(doc, score) for doc, score in scored_docs if score >= RELEVANCE_THRESHOLD]
+        raw_docs = db.similarity_search_with_score(question, k=12)
+        rescored_docs = rerank_docs(question, raw_docs)
+        filtered_docs = [row for row in rescored_docs if row[1] >= RELEVANCE_THRESHOLD][:4]
 
         if not filtered_docs:
             contact_text = format_contact(contacts_map.get("default"))
+            regulation_name = extract_regulation_name(question)
+            regulation_hint = (
+                f"\n요청 규정('{regulation_name}')이 벡터DB에 인덱싱되어 있는지도 함께 확인해 주세요."
+                if regulation_name else ""
+            )
             return (
                 "요청하신 질문에 대해 현재 벡터DB에서 신뢰 가능한 사규 근거를 찾지 못했습니다.\n\n"
                 "사규에 명시되지 않은 내용은 답변할 수 없습니다. 아래 담당자에게 문의해 주세요.\n"
+                f"{regulation_hint}\n"
                 f"{contact_text}"
             )
 
         context_blocks = []
-        for idx, (doc, score) in enumerate(filtered_docs, 1):
+        for idx, (doc, final_score, semantic_score, lexical_score, distance) in enumerate(filtered_docs, 1):
             source_name = Path(doc.metadata.get("source", "Unknown")).name
             context_blocks.append(
-                f"[문서{idx}] 파일: {source_name} | 유사도: {score:.2f}\n{doc.page_content}"
+                f"[문서{idx}] 파일: {source_name} | 근거점수: {final_score:.2f} "
+                f"(semantic={semantic_score:.2f}, lexical={lexical_score:.2f}, distance={distance:.3f})\n"
+                f"{doc.page_content}"
             )
         context = "\n\n".join(context_blocks)
 
